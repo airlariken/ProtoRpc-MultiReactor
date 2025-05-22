@@ -1,0 +1,15 @@
+syntax="proto3";
+package Krpc;
+enum MessageType
+{
+  REQUEST = 0;
+  RESPONSE = 1;
+}
+
+message RpcHeader{
+   MessageType type = 1;
+   fixed64 id = 2;
+   bytes service_name=3;
+   bytes method_name=4;
+   bytes payload = 5;  // 原 args 部分，统一作为载荷，内部可以封装UserServiceRpc协议
+}
