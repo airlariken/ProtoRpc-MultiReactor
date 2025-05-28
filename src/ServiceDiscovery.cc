@@ -84,24 +84,24 @@ void ServiceDiscovery::init(const std::string& host, const std::string& port) {
     zkClient_.Start(host, port);
 
     // 列出根目录下所有 service
-    struct String_vector sv;
-    zkClient_.GetChildrenW("/", zkWatcher, this, &sv);
 
-    for (int i = 0; i < sv.count; ++i) {
-        std::string service = sv.data[i];
+    auto sv = zkClient_.GetChildren("/");
+
+    for (int i = 0; i < sv.size(); ++i) {
+        std::string service = sv[i];
         if (service == "zookeeper") continue;
 
         std::string servicePath = "/" + service;
-        struct String_vector mv;
-        zkClient_.GetChildrenW(servicePath.c_str(), zkWatcher, this, &mv);
 
-        for (int j = 0; j < mv.count; ++j) {
-            std::string method = mv.data[j];
+        auto mv = zkClient_.GetChildren(servicePath.c_str());
+
+        for (int j = 0; j < mv.size(); ++j) {
+            std::string method = mv[j];
             std::string methodPath = servicePath + "/" + method;
 
             // 同时对节点数据和子节点都注册 watcher
             struct String_vector av;
-            zkClient_.GetChildrenW(methodPath.c_str(), zkWatcher, this, &av);
+            zkClient_.GetChildrenW(methodPath.c_str(),zkWatcher, this, &av);
 
             std::vector<std::string> hosts;
             if (av.count == 0) {
@@ -123,12 +123,8 @@ void ServiceDiscovery::init(const std::string& host, const std::string& port) {
             cache_[service + "/" + method] = std::move(hosts);
             deallocate_String_vector(&av);
         }
-        deallocate_String_vector(&mv);
     }
-    deallocate_String_vector(&sv);
 }
-
-
 
 std::string ServiceDiscovery::QueryServiceHost(ZkClient* zkclient,
                                                const std::string& service_name,
@@ -182,7 +178,8 @@ void ServiceDiscovery::zkWatcher(zhandle_t* zh, int type,int state,const char* p
     if (type == ZOO_CHILD_EVENT || type == ZOO_CHANGED_EVENT) {
         LOG(INFO)<<"some server service/method is up/down";
         auto* self = static_cast<ServiceDiscovery*>(ctx);
-        self->handleEvent(path, type);
+//        self->handleEvent(path, type);
+        self->enqueueEvent(path, type);
     }
 }
 
@@ -190,17 +187,21 @@ void ServiceDiscovery::zkWatcher(zhandle_t* zh, int type,int state,const char* p
 void ServiceDiscovery::handleEvent(const std::string& path, int type) {
     // path 类似 "/UserService/Login" 或 "/UserService/Login/instance123"
     // 解析出 service/method
+    LOG(INFO)<<"handling event:"<<path<<"\ttype:"<<type;
     auto parts = split(path, '/');  // 自行实现 split
-    if (parts.size() < 3) return;
-    std::string service = parts[1];
-    std::string method  = parts[2];
+    if (parts.size() < 2) {
+        LOG(INFO)<<"DEBUG: handleEvent():"<<parts[0]<<'\t'<<parts[1]<<"\tparts size samller than 2";
+        return;
+    }
+    std::string service = parts[0];
+    std::string method  = parts[1];
     std::string key     = service + "/" + method;
 
     // 重新拉一次子节点和数据（同 init 逻辑），更新 cache_
     std::vector<std::string> newHosts;
     struct String_vector av;
     zkClient_.GetChildrenW(path.c_str(), zkWatcher, this, &av);
-
+    LOG(INFO)<<"DEBUG: handleEvent()";
     if (av.count == 0) {
         char buf[128]; int len = sizeof(buf);
         zkClient_.GetDataW(path.c_str(), zkWatcher, this, buf, &len);
@@ -220,5 +221,33 @@ void ServiceDiscovery::handleEvent(const std::string& path, int type) {
         cache_[key] = std::move(newHosts);
     }
 }
+
+
+
+void ServiceDiscovery::enqueueEvent(const std::string& path, int type) {
+    {
+        std::lock_guard<std::mutex> lk(queueMtx_);
+        events_.push(ZkEvent{path, type});
+    }
+    queueCv_.notify_one();
+}
+
+void ServiceDiscovery::processEvents() {
+    while (true) {
+        ZkEvent ev;
+        {
+            std::unique_lock<std::mutex> lk(queueMtx_);
+            queueCv_.wait(lk, [&]{ return stop_ || !events_.empty(); });
+            if (stop_ && events_.empty()) return;
+            ev = std::move(events_.front());
+            events_.pop();
+        }
+        LOG(INFO)<<"Debug: processEvents()";
+        // 真正去做同步 ZK 调用和 cache 更新
+        handleEvent(ev.path, ev.type);
+    }
+}
+
+
 
 

@@ -48,6 +48,7 @@ void Application::ParseArgs() {
                 if (pos != std::string::npos) {
                     server_host_ = arg.substr(0, pos);
                     server_port_ = std::stoi(arg.substr(pos+1));
+                    std::cout<<"rpc server config is:"<<server_host_<<":"<<server_port_<<std::endl;
                 }
                 break;
             }

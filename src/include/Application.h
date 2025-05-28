@@ -38,7 +38,7 @@ private:
     std::string              config_path_;
     std::string              zk_host_ = "127.0.0.1";
     int                      zk_port_ = 2181;
-    std::string              server_host_ = "0.0.0.0";
+    std::string              server_host_ = "192.168.3.1";
     int                      server_port_ = 8000;
 
     std::unordered_map<std::string, std::string> config_map_;

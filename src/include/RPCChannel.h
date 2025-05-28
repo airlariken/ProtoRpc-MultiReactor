@@ -1,6 +1,6 @@
-// KrpcChannel.h
-#ifndef _KRPCCHANNEL_H_
-#define _KRPCCHANNEL_H_
+// RPCChannel.h
+#ifndef _RPCCHANNEL_H_
+#define _RPCCHANNEL_H_
 
 #include <google/protobuf/service.h>
 #include <muduo/net/TcpConnection.h>
@@ -16,7 +16,7 @@ struct ServiceInfo
     std::unordered_map<std::string, const google::protobuf::MethodDescriptor*> method_map;
 };
 
-class KrpcChannel : public ::google::protobuf::RpcChannel {
+class RPCChannel : public ::google::protobuf::RpcChannel {
 private:
 
     struct OutstandingCall {
@@ -24,9 +24,9 @@ private:
         ::google::protobuf::Closure* done;
     };
 public:
-    explicit KrpcChannel(const std::shared_ptr<muduo::net::TcpConnection>& conn);
-    explicit KrpcChannel();
-    ~KrpcChannel() override;
+    explicit RPCChannel(const std::shared_ptr<muduo::net::TcpConnection>& conn);
+    explicit RPCChannel();
+    ~RPCChannel() override;
 
     // 发起异步 RPC 调用
     void CallMethod(const ::google::protobuf::MethodDescriptor* method,
@@ -65,4 +65,4 @@ private:
 
 };
 
-#endif // _KRPCCHANNEL_H_
+#endif // _RPCCHANNEL_H_

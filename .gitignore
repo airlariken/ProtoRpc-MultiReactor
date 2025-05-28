@@ -2,3 +2,7 @@
 **/cmake-build-debug-*
 .idea/
 muduo/
+# Ignore everything in bin/
+bin/*
+# But do not ignore test.conf
+!bin/test.conf

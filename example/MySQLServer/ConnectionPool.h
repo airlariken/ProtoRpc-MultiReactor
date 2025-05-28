@@ -8,11 +8,11 @@
 // Created by orange on 3/6/25.
 //
 #include <mysql/mysql.h>
-
+#include <iostream>
 #include <queue>
 #include <mutex>
 #include <condition_variable>
-
+using namespace std;
 #ifndef CONNECTIONPOOL_H
 #define CONNECTIONPOOL_H
 class MySQLConnectionPool {
@@ -57,7 +57,9 @@ public:
             MYSQL* conn = createConnection();
             if (conn) {
                 ++currentCount_;
+                std::cout << "扩容连接，连接池大小：" <<currentCount_<< std::endl;
                 return conn;
+
             } else {
                 std::cerr << "新建连接失败！" << std::endl;
                 return nullptr;

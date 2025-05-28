@@ -2,6 +2,9 @@
 #include "rpc.pb.h"
 #include "Logger.h"
 #include <csignal>
+#include "muduo/net/EventLoop.h"
+// === Add global server pointer in one cpp file ===
+RpcServer* _my_server = nullptr;
 
 
 // 注册服务对象及其方法，以便服务端能够处理客户端的RPC请求
@@ -51,15 +54,15 @@ void RpcServer::Run(const std::string& server_ip, int server_port, const std::st
     muduo::net::InetAddress address(server_ip, server_port);
 
     // 创建TcpServer对象
-    std::shared_ptr<muduo::net::TcpServer> server = std::make_shared<muduo::net::TcpServer>(&event_loop, address, "KrpcProvider");
+    server_ = std::make_shared<muduo::net::TcpServer>(&event_loop, address, "RPCServer");
 
     // 绑定连接回调和消息回调，分离网络连接业务和消息处理业务
-    server->setConnectionCallback(std::bind(&RpcServer::OnConnection, this, std::placeholders::_1));
+    server_->setConnectionCallback(std::bind(&RpcServer::OnConnection, this, std::placeholders::_1));
 //    server->setMessageCallback(std::bind(&KrpcProvider::OnMessage, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
 
 
     // 设置muduo库的线程数量
-    server->setThreadNum(3);
+    server_->setThreadNum(5);
 
 //    // 将当前RPC节点上要发布的服务全部注册到ZooKeeper上，让RPC客户端可以在ZooKeeper上发现服务
 //    ZkClient zkclient;
@@ -103,39 +106,20 @@ void RpcServer::Run(const std::string& server_ip, int server_port, const std::st
 
             instance_paths_.push_back(instancePath);     //  record instance paths
             //    Option B: let ZooKeeper append a sequence number:
-            //std::string instPrefix = methodPath + "/provider-";
+            //std::string instPrefix = methodPath + "/server-";
             //zkclient.Create(instPrefix.c_str(),
             //                buf, strlen(buf),
             //                ZOO_EPHEMERAL | ZOO_SEQUENCE);
         }
     }
 
-    // Save pointer for signal handler
-    extern RpcServer* g_provider;
-    g_provider = this;
-
-    // 3) Setup signal handler for graceful shutdown
-    auto signal_handler = [](int signo){
-        LOG(INFO) << "Signal " << signo << " received, stopping provider...";
-        g_provider->Cleanup();
-        // 让 main() 自然退出，触发栈展开
-        g_provider->event_loop.quit();
-    };
-    ::signal(SIGINT,  signal_handler);
-    ::signal(SIGTERM, signal_handler);
-
-
     //GPT重构版本，支持多server注册相同服务，负载均衡 end
-
     // RPC服务端准备启动，打印信息
-    LOG(INFO) << "RpcProvider start service at server_ip:" << server_ip << " server_port:" << server_port;
+    LOG(INFO) << "RpcServer start service at server_ip:" << server_ip << " server_port:" << server_port;
 
     // 启动网络服务
-    server->start();
+    server_->start();
     event_loop.loop();  // 进入事件循环
-
-    // After loop quits, perform cleanup
-    Cleanup();
 }
 
 // 连接回调函数，处理客户端连接事件
@@ -145,16 +129,18 @@ void RpcServer::OnConnection(const muduo::net::TcpConnectionPtr &conn) {
              << (conn->connected() ? "UP" : "DOWN");
 
     if (conn->connected()){
-        std::shared_ptr<KrpcChannel> krpcChannel_ptr = std::make_shared<KrpcChannel>(conn);     //注意这里一定要传进去个conn我草曹操
+        std::shared_ptr<RPCChannel> krpcChannel_ptr = std::make_shared<RPCChannel>(conn);     //注意这里一定要传进去个conn我草曹操
         conn->setContext(krpcChannel_ptr);
         krpcChannel_ptr->setServices(&service_map);
-        conn->setMessageCallback(std::bind(&KrpcChannel::onMessage, krpcChannel_ptr.get(), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        conn->setMessageCallback(std::bind(&RPCChannel::onMessage, krpcChannel_ptr.get(), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+        pending_requests_.fetch_add(1);
     }
     // @@@czw modified end@@@
     if (!conn->connected()) {
 //        LOG(INFO)<<"server call conn->shutdown()";
         // 1) 清除 context，让 shared_ptr<KrpcChannel> 释放
-        conn->setContext(std::shared_ptr<KrpcChannel>());
+        conn->setContext(std::shared_ptr<RPCChannel>());
+        pending_requests_.fetch_sub(1) - 1;
 //        conn->shutdown();//我草啊就是这b行代码导致客户端无法关闭，我草啊为啥啊，debug1h我去
         // 2) 不要再调用 conn->shutdown() ——muduo 在 TCP FIN/ACK 完成后自动 close
     }
@@ -164,15 +150,67 @@ void RpcServer::OnConnection(const muduo::net::TcpConnectionPtr &conn) {
 void RpcServer::Cleanup() {
     LOG(INFO) << "Unregistering services from ZooKeeper...";
     for (const auto &path : instance_paths_) {
+        LOG(INFO) <<"deleting service method:"<<path;
+//        sleep(10);
         zkclient_.Delete(path.c_str());
     }
+//    不需要在下线时再显式调用 zoo_delete() 来清理临时节点。关闭会话就足够了！！！
     zkclient_.Close(); // closes handle and deletes ephemerals
+    LOG(INFO) << "ZooKeeper handle closed";
 }
-
 
 
 // 析构函数，退出事件循环
 RpcServer::~RpcServer() {
-    LOG(INFO) << "~KrpcProvider()";
-    event_loop.quit();  // 退出事件循环
+    // After loop quits, perform cleanup
+    Cleanup();
+    LOG(INFO) << "~RpcServer()";
+//    event_loop.quit();  // 退出事件循环
+}
+
+RpcServer::RpcServer() {
+    // Save pointer for signal handler
+    extern RpcServer* _my_server;
+    _my_server = this;
+
+    // 3) Setup signal handler for graceful shutdown
+    auto signal_handler2 = [](int signo){
+        LOG(INFO) << "Signal SIGTERM" << signo << " received, stopping server...";
+//        _my_server->Cleanup();
+        // 让 main() 自然退出，触发栈展开
+        _my_server->event_loop.queueInLoop(std::bind(&muduo::net::EventLoop::quit, &_my_server->event_loop));
+//        _my_server->event_loop.quit();
+    };
+    auto signal_handler1 = [](int signo){
+        LOG(INFO) << "Signal SIGINT" << signo << " received, stopping server...";
+//        _my_server->Cleanup();
+        // 让 main() 自然退出，触发栈展开
+        _my_server->StopServer();
+//        _my_server->event_loop.quit();
+    };
+    ::signal(SIGINT,  signal_handler1);
+    ::signal(SIGTERM, signal_handler2);
+}
+
+void RpcServer::StopServer() {
+    Cleanup();          //下线Zookeeper，节点消失，会触发client端的watcher的回调
+    // 标记为正在停止
+//    stopping_.store(true);
+
+    // 所有操作都在 Loop 线程执行
+    event_loop.queueInLoop([this]() {
+        // 1) 关闭监听，不再接受新连接/请求
+        server_->disableAccept();
+//        sleep(1);       //1s后检查是否还有残余连接
+        // 2) 如果此时已经没有未完成请求，立即退出 loop
+        if (pending_requests_.load() == 0) {
+            event_loop.queueInLoop(std::bind(&muduo::net::EventLoop::quit, &event_loop));
+            LOG(INFO)<<"No more conn left, safe close without rst conn";
+            return ;
+        }
+        sleep(1);       //如果连接还有，给你3秒机会去处理，如果还是没完成，直接关了
+        event_loop.queueInLoop(std::bind(&muduo::net::EventLoop::quit, &event_loop));
+        LOG(INFO)<<"hard close with some conns still left";
+        return ;
+    });
 }

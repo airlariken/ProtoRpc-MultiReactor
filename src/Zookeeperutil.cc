@@ -145,7 +145,4 @@ void ZkClient::Close() {
         LOG(INFO) << "ZooKeeper session closed";
     }
 }
-// === Add global provider pointer in one cpp file ===
-RpcServer* g_provider = nullptr;
-
 // === Modifications in zookeeperutil.cpp ===

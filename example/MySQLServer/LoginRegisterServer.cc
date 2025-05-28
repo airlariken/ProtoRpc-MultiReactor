@@ -2,10 +2,9 @@
 #include <string>
 #include <mysql/mysql.h>
 #include "../user.pb.h"
-#include "Krpcapplication.h"
+#include "Application.h"
 #include "RPCServer.h"
 #include <muduo/base/ThreadPool.h>
-#include <random>
 #include <thread>
 #include "ConnectionPool.h"
 #include "Logger.h"
@@ -17,14 +16,13 @@ private:
     MySQLConnectionPool pool_;
 
 public:
-    UserServiceImpl(int thread_num = 3)
+    UserServiceImpl(const string& database_username, const string& database_passwd, int thread_num = 10)
             : threadPool_("UserService Workers' Threads"),
-              pool_("192.168.3.1", "root", "zmxncbv.345", "chat", 3306, 2, 10)
+              pool_("192.168.3.1", database_username, database_passwd, "chat", 3306, 50, 50)
     {
         threadPool_.start(thread_num);
     }
 
-    // 真正的登录逻辑：查询 user_table 中用户名对应的密码并比对
 // 真正的登录逻辑：查询 user_table 中用户名对应的密码并比对
     bool Login(const std::string& name, const std::string& pwd) {
         MYSQL* conn = pool_.getConnection();
@@ -106,9 +104,28 @@ public:
 };
 
 int main(int argc, char** argv) {
-    KrpcApplication::Init(argc, argv);
-    RpcServer provider;
-    provider.NotifyService(new UserServiceImpl());
-    provider.Run();
+//    KrpcApplication::Init(argc, argv);
+    auto& app = Application::Instance(argc, argv);
+
+    // 获取 Zookeeper 地址与端口
+    std::string zkHost  = app.ZkHost();
+    int         zkPort  = app.ZkPort();
+
+    // 获取 Server 部署地址与端口
+    std::string srvHost = app.ServerHost();
+    int         srvPort = app.ServerPort();
+
+    // 从配置文件里读取其它配置项
+    std::string db_username = app.GetConfig("db_username");
+    std::string db_passwd =  app.GetConfig("db_passwd");
+    // 创建一个 RPC 服务提供者对象
+    RpcServer _rpc_server;
+
+    // 将 UserService 对象发布到 RPC 节点上，使其可以被远程调用
+    _rpc_server.NotifyService(new UserServiceImpl(db_username, db_passwd));
+
+    // 启动 RPC 服务节点，进入阻塞状态，等待远程的 RPC 调用请求
+    _rpc_server.Run(srvHost, srvPort, zkHost, std::to_string(zkPort));
+
     return 0;
 }
