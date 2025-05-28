@@ -2,8 +2,8 @@
 - 支持基于Zookeeper的rpc服务上下线感知
 - 支持客户端负载均衡
 - 服务端支持线程池与异步任务
-- RPC Ping-Pong测试单机16核 1000+wQPS
-- RPC Mysql查询服务单机16核 100+wQPS（基于连接池的异步实现）
+- RPC Ping-Pong测试单机16核 100+wQPS
+- RPC Mysql查询服务单机16核 10+wQPS（基于连接池的异步实现）
 
 
 
@@ -346,7 +346,7 @@ int main() {
     - 每个server不启动工作线程
     - 每个server 5个muduo的IO线程
 - client端：
-    - 线程数（TCP连接数）20
+    - 线程数（TCP连接数）40
     - 单个连接的请求数200,000
 
 
