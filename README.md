@@ -341,4 +341,29 @@ int main() {
 # RPC服务端压力测试
 ## PingPong测试
 
+- Server端
+    - 2个server进程
+    - 每个server不启动工作线程
+    - 每个server 5个muduo的IO线程
+- client端：
+    - 线程数（TCP连接数）20
+    - 单个连接的请求数200,000
+
+
+
+
+![压测PingPong](Image/StressTest_PingPong.png)
+
+
 ## MySQL账户查询测试
+
+- Server端
+    - 3个server进程
+    - 每个server  连接池50个连接
+    - 每个server 工作线程10个（异步非阻塞muduo IO线程）
+    - 每个server 5个muduo的IO线程
+- client端：
+    - 线程数（TCP连接数）40
+    - 单个连接的请求数20000
+
+![StressTestRPC_MySQL](Image/StressTest_MySQL.png)
